@@ -1,0 +1,11 @@
+pandas>=2.0
+numpy>=1.24
+requests>=2.31
+seaborn>=0.13
+matplotlib>=3.7
+plotly>=5.20
+scipy>=1.11
+pytest>=7.4
+# Optional, only needed if you use the geopandas mapping path instead of plotly:
+# geopandas>=0.14
+# shapely>=2.0

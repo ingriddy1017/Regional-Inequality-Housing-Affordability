@@ -54,6 +54,8 @@ REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0 (regional-socioeconomic-inequality
 
 
 def _get_csv(url: str, encoding: str = "latin-1", **read_csv_kwargs) -> pd.DataFrame:
+    # A timeout prevents an unavailable public endpoint from blocking the
+    # entire pipeline indefinitely.
     resp = requests.get(url, headers=REQUEST_HEADERS, timeout=60)
     resp.raise_for_status()
     return pd.read_csv(io.BytesIO(resp.content), encoding=encoding, **read_csv_kwargs)
@@ -66,6 +68,8 @@ def _find_column(columns: list[str], *keyword_groups: list[str]) -> str | None:
     matching is brittle across years -- this matches on stable substrings
     instead.
     """
+    # Match using lowercase text but return the original column spelling for
+    # pandas selection.
     lowered = {c: c.lower() for c in columns}
     for group in keyword_groups:
         for col, low in lowered.items():
@@ -76,12 +80,15 @@ def _find_column(columns: list[str], *keyword_groups: list[str]) -> str | None:
 
 def fetch_usda_poverty() -> pd.DataFrame:
     """Real county poverty rate from USDA ERS (SAIPE-based estimates)."""
+    # USDA has used more than one FIPS column name across releases, so support
+    # the known alternatives before standardizing the output.
     df = _get_csv(USDA_POVERTY_CSV, dtype={"FIPS_Code": str, "FIPStxt": str})
     fips_col = "FIPS_Code" if "FIPS_Code" in df.columns else "FIPStxt"
     poverty_col = _find_column(list(df.columns), ["pctpovall"], ["poverty", "percent"], ["poverty", "all", "ages"])
     if poverty_col is None:
         raise ValueError(f"Couldn't find a poverty-rate column in USDA poverty CSV. Columns: {list(df.columns)}")
     out = df[[fips_col, poverty_col]].rename(columns={fips_col: "FIPS", poverty_col: "poverty_rate"})
+    # Normalize identifiers immediately so this table is merge-ready.
     out["FIPS"] = out["FIPS"].astype(str).str.zfill(5)
     return out.dropna(subset=["FIPS"])
 
@@ -93,6 +100,8 @@ def fetch_usda_education() -> pd.DataFrame:
     if fips_col is None:
         raise ValueError(f"Couldn't find a FIPS column in USDA education CSV. Columns: {list(df.columns)}")
     # Prefer the most recent 5-yr window's bachelor's-or-higher percentage column.
+    # Multiple year windows may be present, so collect all bachelor's columns
+    # and select the newest one below.
     candidates = [c for c in df.columns if "bachelor" in c.lower()]
     if not candidates:
         raise ValueError(f"Couldn't find a bachelor's-degree column. Columns: {list(df.columns)}")
@@ -102,6 +111,7 @@ def fetch_usda_education() -> pd.DataFrame:
     def end_year(col: str) -> int:
         years = re.findall(r"(\d{4})", col)
         return int(years[-1]) if years else -1
+    # max(..., key=...) chooses the candidate with the latest ending year.
     educ_col = max(candidates, key=end_year)
     out = df[[fips_col, educ_col]].rename(columns={fips_col: "FIPS", educ_col: "pct_bachelors_or_higher"})
     out["FIPS"] = out["FIPS"].astype(str).str.zfill(5)
@@ -112,12 +122,14 @@ def fetch_usda_income() -> pd.DataFrame:
     """Real median household income, most recent year, from USDA ERS."""
     df = _get_csv(USDA_INCOME_UNEMPLOYMENT_CSV, dtype={"FIPS_Code": str, "FIPStxt": str})
     fips_col = "FIPS_Code" if "FIPS_Code" in df.columns else "FIPStxt"
+    # Accept both USDA's abbreviated and descriptive income field names.
     candidates = [c for c in df.columns if "medhhinc" in c.lower() or ("median" in c.lower() and "income" in c.lower())]
     if not candidates:
         raise ValueError(f"Couldn't find a median household income column. Columns: {list(df.columns)}")
     def end_year(col: str) -> int:
         years = re.findall(r"(\d{4})", col)
         return int(years[-1]) if years else -1
+    # Prefer the most recent year when several income measures are included.
     income_col = max(candidates, key=end_year)
     out = df[[fips_col, income_col]].rename(columns={fips_col: "FIPS", income_col: "median_household_income"})
     out["FIPS"] = out["FIPS"].astype(str).str.zfill(5)
@@ -145,10 +157,12 @@ def fetch_census_housing(year: int = 2022, api_key: str | None = None) -> pd.Dat
     """
     url = CENSUS_ACS_BASE.format(year=year)
     params = {"get": f"NAME,{CENSUS_HOUSING_VARS}", "for": "county:*"}
+    # Supplying the key is optional for light use, so add it only when given.
     if api_key:
         params["key"] = api_key
     resp = requests.get(url, params=params, headers=REQUEST_HEADERS, timeout=60)
     resp.raise_for_status()
+    # The API returns one header row followed by one row per county.
     data = resp.json()
     df = pd.DataFrame(data[1:], columns=data[0])
     df["FIPS"] = df["state"].str.zfill(2) + df["county"].str.zfill(3)
@@ -156,6 +170,7 @@ def fetch_census_housing(year: int = 2022, api_key: str | None = None) -> pd.Dat
         "B25077_001E": "median_home_value",
         "B25064_001E": "median_gross_rent",
     })
+    # Convert text responses to numeric values; malformed values become NA.
     for col in ["median_home_value", "median_gross_rent"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     # Census codes missing/suppressed values as large negative sentinels
@@ -175,6 +190,8 @@ def build_real_dataset(
     analysis, visualization) already expects, so no downstream code
     needs to change when you switch from synthetic to real data.
     """
+    # Fetch each source separately, then assemble the same two-table contract
+    # used by the synthetic-data path.
     print("[real_data] Fetching USDA ERS poverty data...")
     poverty = fetch_usda_poverty()
     print("[real_data] Fetching USDA ERS education data...")
@@ -186,6 +203,8 @@ def build_real_dataset(
     print(f"[real_data] Fetching Census ACS {census_year} 5-Year housing data...")
     housing = fetch_census_housing(year=census_year, api_key=census_api_key)
 
+    # Keep only counties with every required USDA measure so later metrics do
+    # not silently operate on incomplete records.
     usda_df = education.merge(poverty, on="FIPS", how="inner").merge(rucc, on="FIPS", how="inner")
     census_df = income.merge(housing, on="FIPS", how="inner")
 
@@ -203,6 +222,7 @@ def build_real_dataset(
 
     print(f"[real_data] Assembled USDA table: {usda_df.shape}, Census table: {census_df.shape}")
 
+    # Cache successful downloads under the filenames expected by load_or_generate.
     if save_to_raw:
         raw_dir.mkdir(parents=True, exist_ok=True)
         usda_df.to_csv(raw_dir / "usda_education_poverty.csv", index=False)

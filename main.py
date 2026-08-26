@@ -24,16 +24,20 @@ FIGURES_DIR = ROOT / "outputs" / "figures"
 
 
 def main(use_real_data: bool = False) -> None:
+    # Create output folders up front so every later save has a destination.
     TABLES_DIR.mkdir(parents=True, exist_ok=True)
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
     # --- Phase 1: Data Acquisition ---
     print("\n=== Phase 1: Data Acquisition ===")
+    # Real downloads are opt-in; the default remains runnable offline.
     if use_real_data:
         try:
             from src import real_data
             usda_df, census_df = real_data.build_real_dataset()
         except Exception as exc:
+            # A failed network request or changed source schema should not
+            # prevent the local synthetic demonstration from running.
             print(f"[main] Real-data fetch failed ({exc}); falling back to synthetic demo data.")
             usda_df, census_df = data_acquisition.load_or_generate()
     else:
@@ -43,13 +47,18 @@ def main(use_real_data: bool = False) -> None:
 
     # --- Phase 2: Merging Datasets ---
     print("\n=== Phase 2: Merging Datasets ===")
+    # Analyze only counties represented in both source tables.
     merged = data_merge.merge_datasets(usda_df, census_df, how="inner")
 
     # --- Phase 3: Metric Engineering ---
     print("\n=== Phase 3: Metric Engineering ===")
+    # Add all derived fields before any analysis or visualization consumes the
+    # merged table.
     merged = metrics.engineer_all_metrics(merged)
     data_merge.save_merged(merged, TABLES_DIR / "merged_county_data.csv")
 
+    # Save the matrix separately because it is useful apart from row-level
+    # county data.
     corr = metrics.correlation_matrix(merged)
     corr.to_csv(TABLES_DIR / "correlation_matrix.csv")
     print("\nCorrelation matrix:\n", corr)
@@ -62,6 +71,7 @@ def main(use_real_data: bool = False) -> None:
 
     # --- Urban/Rural confound check (Pitfall #1) ---
     print("\n=== Urban/Rural Confound Analysis ===")
+    # Produce broad metro/nonmetro summaries before the finer RUCC analysis.
     urbanicity_summary = analysis.summarize_by_urbanicity(merged)
     urbanicity_summary.to_csv(TABLES_DIR / "summary_by_urbanicity.csv")
     print(urbanicity_summary)
@@ -96,6 +106,8 @@ def main(use_real_data: bool = False) -> None:
 
 
 if __name__ == "__main__":
+    # Keep argument parsing out of imports so another module can call main()
+    # without accidentally starting the pipeline.
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--real-data",

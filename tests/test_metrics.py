@@ -11,24 +11,28 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+# Add the repository root so imports work even when pytest starts elsewhere.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import data_merge, metrics
 
 
 def test_normalize_fips_pads_leading_zero():
+    # Integer-like FIPS values lose their leading zero when pandas reads them.
     df = pd.DataFrame({"FIPS": [1001, 6037, "1003"]})
     out = data_merge.normalize_fips(df)
     assert out["FIPS"].tolist() == ["01001", "06037", "01003"]
 
 
 def test_normalize_fips_handles_float_strings():
+    # CSV readers can represent identifier values with a trailing ".0".
     df = pd.DataFrame({"FIPS": ["1001.0", "6037.0"]})
     out = data_merge.normalize_fips(df)
     assert out["FIPS"].tolist() == ["01001", "06037"]
 
 
 def test_merge_datasets_inner_join_no_duplicates():
+    # The missing Census county verifies that only shared keys survive.
     usda = pd.DataFrame({
         "FIPS": ["01001", "06037", "48201"],
         "pct_bachelors_or_higher": [20.0, 45.0, 30.0],
@@ -47,6 +51,7 @@ def test_merge_datasets_inner_join_no_duplicates():
 
 
 def test_price_to_income_ratio():
+    # A known quotient directly checks the affordability formula.
     df = pd.DataFrame({
         "median_home_value": [200000],
         "median_household_income": [50000],
@@ -56,6 +61,7 @@ def test_price_to_income_ratio():
 
 
 def test_rent_burden_pct():
+    # Monthly rent must be annualized before comparison with annual income.
     df = pd.DataFrame({
         "median_gross_rent": [1000],
         "median_household_income": [48000],
@@ -66,12 +72,14 @@ def test_rent_burden_pct():
 
 
 def test_urban_flag():
+    # Values on both sides of the 3/4 boundary verify the exact cutoff.
     df = pd.DataFrame({"rucc_code": [1, 3, 4, 9]})
     out = metrics.add_urban_flag(df)
     assert out["is_metro"].tolist() == [True, True, False, False]
 
 
 def test_correlation_matrix_only_uses_available_columns():
+    # A partial table should yield a matrix from its available fields only.
     df = pd.DataFrame({
         "pct_bachelors_or_higher": [10, 20, 30],
         "poverty_rate": [30, 20, 10],

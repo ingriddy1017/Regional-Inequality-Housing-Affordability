@@ -22,7 +22,11 @@ def normalize_fips(df: pd.DataFrame, column: str = "FIPS") -> pd.DataFrame:
     Handles the common failure modes: FIPS read as int64 (drops leading
     zero), FIPS read as float (adds a trailing '.0'), or stray whitespace.
     """
+    # Work on a copy so normalizing identifiers does not unexpectedly mutate
+    # a DataFrame that the caller may still need in its original form.
     df = df.copy()
+    # Apply each cleanup in order: convert types, remove a CSV-style ".0",
+    # trim whitespace, and finally restore the required five-digit width.
     df[column] = (
         df[column]
         .astype(str)
@@ -53,11 +57,16 @@ def merge_datasets(
     -------
     Merged DataFrame, one row per county.
     """
+    # Normalize both sides before merging so equivalent identifiers have the
+    # same type and spelling, including counties whose FIPS starts with zero.
     usda_df = normalize_fips(usda_df)
     census_df = normalize_fips(census_df)
 
+    # Save row counts so the diagnostic below can reveal unmatched counties.
     before_usda, before_census = len(usda_df), len(census_df)
 
+    # one_to_one catches duplicate FIPS values instead of silently multiplying
+    # rows and producing misleading county-level statistics.
     merged = pd.merge(
         usda_df,
         census_df,
@@ -67,11 +76,15 @@ def merge_datasets(
         suffixes=("_usda", "_census"),
     )
 
+    # Calculate the number of rows not represented in an inner join. The
+    # value is retained for readability/debugging even though the message
+    # below reports the more useful per-table unmatched counts.
     dropped = (before_usda + before_census) - 2 * len(merged) if how == "inner" else None
     print(
         f"[data_merge] USDA rows: {before_usda} | Census rows: {before_census} "
         f"| Merged rows: {len(merged)} (how='{how}')"
     )
+    # Set differences identify keys present on only one side of the join.
     unmatched_usda = set(usda_df["FIPS"]) - set(census_df["FIPS"])
     unmatched_census = set(census_df["FIPS"]) - set(usda_df["FIPS"])
     if unmatched_usda or unmatched_census:
@@ -84,5 +97,7 @@ def merge_datasets(
 
 
 def save_merged(df: pd.DataFrame, path: str) -> None:
+    # index=False prevents pandas from adding an artificial index column to
+    # the CSV that would look like another data field when read later.
     df.to_csv(path, index=False)
     print(f"[data_merge] Saved merged dataset -> {path} ({len(df)} rows)")

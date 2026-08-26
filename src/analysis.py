@@ -31,6 +31,7 @@ RUCC_LABELS = {
 
 
 def add_rucc_label(df: pd.DataFrame, rucc_column: str = "rucc_code") -> pd.DataFrame:
+    # Keep the numeric code for computation and add readable text for reports.
     df = df.copy()
     df["rucc_label"] = df[rucc_column].map(RUCC_LABELS)
     return df
@@ -42,6 +43,7 @@ def summarize_by_urbanicity(df: pd.DataFrame) -> pd.DataFrame:
     Uses medians throughout (Pitfall #2), and reports county counts so
     small groups aren't over-interpreted.
     """
+    # Named aggregations make each output statistic explicit and auditable.
     agg = df.groupby("is_metro").agg(
         n_counties=("FIPS", "count"),
         median_pct_bachelors=("pct_bachelors_or_higher", "median"),
@@ -51,12 +53,15 @@ def summarize_by_urbanicity(df: pd.DataFrame) -> pd.DataFrame:
         median_price_to_income_ratio=("price_to_income_ratio", "median"),
         median_rent_burden_pct=("rent_burden_pct", "median"),
     )
+    # Human-readable index labels are clearer than raw True/False values in a
+    # printed summary or exported CSV.
     agg.index = agg.index.map({True: "Metro", False: "Nonmetro"})
     return agg.round(2)
 
 
 def summarize_by_rucc_tier(df: pd.DataFrame) -> pd.DataFrame:
     """Same as above but broken out into all 9 RUCC tiers, not just metro/nonmetro."""
+    # Add labels before grouping so each numeric tier remains identifiable.
     df = add_rucc_label(df)
     agg = df.groupby(["rucc_code", "rucc_label"]).agg(
         n_counties=("FIPS", "count"),
@@ -66,6 +71,7 @@ def summarize_by_rucc_tier(df: pd.DataFrame) -> pd.DataFrame:
         median_home_value=("median_home_value", "median"),
         median_price_to_income_ratio=("price_to_income_ratio", "median"),
     ).round(2)
+    # Convert index levels back to columns for convenient CSV export.
     return agg.reset_index()
 
 
@@ -77,10 +83,14 @@ def education_affordability_relationship(df: pd.DataFrame) -> pd.DataFrame:
     correlations, that's a signal the relationship is substantially
     driven by the urban/rural mix rather than education itself.
     """
+    # Build records first because the overall and subgroup calculations use
+    # different row sets but share the same output fields.
     rows = []
     overall = df["pct_bachelors_or_higher"].corr(df["price_to_income_ratio"])
     rows.append({"group": "Overall (unadjusted)", "n": len(df), "correlation": round(overall, 3)})
 
+    # Compare the pooled relationship with within-group relationships to
+    # reveal whether urbanicity is driving the apparent association.
     for is_metro, label in [(True, "Metro only"), (False, "Nonmetro only")]:
         sub = df[df["is_metro"] == is_metro]
         corr = sub["pct_bachelors_or_higher"].corr(sub["price_to_income_ratio"])

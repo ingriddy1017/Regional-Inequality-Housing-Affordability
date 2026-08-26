@@ -14,6 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib
+# Use a non-interactive backend because the pipeline may run without a desktop
+# display, such as in CI or on a remote server.
 matplotlib.use("Agg")  # headless-safe backend
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -25,6 +27,7 @@ def plot_correlation_heatmap(
     save_path: str | Path,
     title: str = "Correlation Matrix: Education, Poverty, Income & Housing",
 ) -> None:
+    # Use a stable canvas size so saved figures have consistent proportions.
     plt.figure(figsize=(9, 7))
     sns.heatmap(
         corr_df,
@@ -39,6 +42,7 @@ def plot_correlation_heatmap(
     )
     plt.title(title, fontsize=13, pad=14)
     plt.tight_layout()
+    # Create the destination directory automatically on a fresh checkout.
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(save_path, dpi=150)
     plt.close()
@@ -60,9 +64,13 @@ def plot_choropleth(
     """
     import plotly.express as px
 
+    # Plotly needs string FIPS keys, but copying prevents this normalization
+    # from changing the caller's DataFrame.
     df = df.copy()
     df[fips_column] = df[fips_column].astype(str).str.zfill(5)
 
+    # Each row is matched to a county polygon by FIPS, while color represents
+    # the selected metric value.
     fig = px.choropleth(
         df,
         geojson="https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json",
@@ -78,6 +86,7 @@ def plot_choropleth(
         margin={"r": 0, "t": 50, "l": 0, "b": 0},
     )
 
+    # Ensure HTML output can be written even when outputs/figures is absent.
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     fig.write_html(str(save_path))
     print(f"[visualization] Saved choropleth -> {save_path}")
@@ -100,11 +109,14 @@ def plot_choropleth_static_fallback(
     """
     import geopandas as gpd
 
+    # This opt-in fallback reads local boundaries; the default map uses the
+    # interactive Plotly GeoJSON source instead.
     counties = gpd.read_file(Path(__file__).resolve().parents[1] / "data" / "raw" / "cb_counties.zip")
     counties["FIPS"] = counties["STATEFP"] + counties["COUNTYFP"]
 
     df = df.copy()
     df[fips_column] = df[fips_column].astype(str).str.zfill(5)
+    # Keep only polygons with data so the map does not contain empty records.
     merged = counties.merge(df, left_on="FIPS", right_on=fips_column, how="inner")
 
     fig, ax = plt.subplots(1, 1, figsize=(14, 8))

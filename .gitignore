@@ -5,14 +5,3 @@ venv/
 .ipynb_checkpoints/
 *.egg-info/
 .DS_Store
-
-# Raw data can be large / license-restricted — don't commit it
-data/raw/*.csv
-data/raw/*.zip
-!data/raw/.gitkeep
-
-# Generated outputs (regenerate via `python main.py`)
-outputs/figures/*
-outputs/tables/*
-!outputs/figures/.gitkeep
-!outputs/tables/.gitkeep

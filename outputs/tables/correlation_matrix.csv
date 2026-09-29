@@ -1,0 +1,8 @@
+,pct_bachelors_or_higher,poverty_rate,median_household_income,median_home_value,median_gross_rent,price_to_income_ratio,rent_burden_pct
+pct_bachelors_or_higher,1.0,-0.51,0.723,0.718,0.701,0.579,0.104
+poverty_rate,-0.51,1.0,-0.761,-0.459,-0.434,-0.24,0.382
+median_household_income,0.723,-0.761,1.0,0.756,0.768,0.446,-0.163
+median_home_value,0.718,-0.459,0.756,1.0,0.848,0.892,0.245
+median_gross_rent,0.701,-0.434,0.768,0.848,1.0,0.698,0.487
+price_to_income_ratio,0.579,-0.24,0.446,0.892,0.698,1.0,0.436
+rent_burden_pct,0.104,0.382,-0.163,0.245,0.487,0.436,1.0

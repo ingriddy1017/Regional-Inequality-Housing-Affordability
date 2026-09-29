@@ -1,0 +1,3 @@
+is_metro,n_counties,median_pct_bachelors,median_poverty_rate,median_household_income,median_home_value,median_price_to_income_ratio,median_rent_burden_pct
+Nonmetro,1943,19.52,14.5,56853.0,138100.0,2.48,16.5
+Metro,1177,27.32,11.9,69538.0,215700.0,3.06,17.6

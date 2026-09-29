@@ -31,6 +31,7 @@ data/raw/, then run `python main.py` as usual.
 from __future__ import annotations
 
 import io
+import os
 import re
 from pathlib import Path
 
@@ -58,7 +59,25 @@ def _get_csv(url: str, encoding: str = "latin-1", **read_csv_kwargs) -> pd.DataF
     # entire pipeline indefinitely.
     resp = requests.get(url, headers=REQUEST_HEADERS, timeout=60)
     resp.raise_for_status()
-    return pd.read_csv(io.BytesIO(resp.content), encoding=encoding, **read_csv_kwargs)
+    df = pd.read_csv(io.BytesIO(resp.content), encoding=encoding, **read_csv_kwargs)
+    return _long_to_wide(df)
+
+
+def _long_to_wide(df: pd.DataFrame) -> pd.DataFrame:
+    """USDA ERS publishes its county files in long format (one row per
+    county per variable, in 'Attribute'/'Value' columns). Pivot those to one
+    row per county with one column per attribute, so the column-matching
+    logic below works on either layout.
+    """
+    if not {"Attribute", "Value"}.issubset(df.columns):
+        return df
+    id_cols = [c for c in df.columns if c not in ("Attribute", "Value")]
+    # Area/state name columns are constant per FIPS code, so pivot on the FIPS
+    # column alone and avoid dropping rows whose names contain NaN.
+    fips_col = next(c for c in id_cols if "fips" in c.lower())
+    wide = df.pivot_table(index=fips_col, columns="Attribute", values="Value", aggfunc="first")
+    wide.columns.name = None
+    return wide.reset_index()
 
 
 def _find_column(columns: list[str], *keyword_groups: list[str]) -> str | None:
@@ -90,6 +109,7 @@ def fetch_usda_poverty() -> pd.DataFrame:
     out = df[[fips_col, poverty_col]].rename(columns={fips_col: "FIPS", poverty_col: "poverty_rate"})
     # Normalize identifiers immediately so this table is merge-ready.
     out["FIPS"] = out["FIPS"].astype(str).str.zfill(5)
+    out["poverty_rate"] = pd.to_numeric(out["poverty_rate"], errors="coerce")
     return out.dropna(subset=["FIPS"])
 
 
@@ -105,6 +125,8 @@ def fetch_usda_education() -> pd.DataFrame:
     candidates = [c for c in df.columns if "bachelor" in c.lower()]
     if not candidates:
         raise ValueError(f"Couldn't find a bachelor's-degree column. Columns: {list(df.columns)}")
+    # The file has both head counts and percentages; keep the percentages.
+    candidates = [c for c in candidates if "percent" in c.lower()] or candidates
     # Column names include the year range, e.g. "Percent of adults with a
     # bachelor's degree or higher, 2019-23" -- take the one with the latest
     # end-year found in its name.
@@ -115,6 +137,7 @@ def fetch_usda_education() -> pd.DataFrame:
     educ_col = max(candidates, key=end_year)
     out = df[[fips_col, educ_col]].rename(columns={fips_col: "FIPS", educ_col: "pct_bachelors_or_higher"})
     out["FIPS"] = out["FIPS"].astype(str).str.zfill(5)
+    out["pct_bachelors_or_higher"] = pd.to_numeric(out["pct_bachelors_or_higher"], errors="coerce")
     return out.dropna(subset=["FIPS"])
 
 
@@ -133,6 +156,7 @@ def fetch_usda_income() -> pd.DataFrame:
     income_col = max(candidates, key=end_year)
     out = df[[fips_col, income_col]].rename(columns={fips_col: "FIPS", income_col: "median_household_income"})
     out["FIPS"] = out["FIPS"].astype(str).str.zfill(5)
+    out["median_household_income"] = pd.to_numeric(out["median_household_income"], errors="coerce")
     return out.dropna(subset=["FIPS"])
 
 
@@ -157,11 +181,20 @@ def fetch_census_housing(year: int = 2022, api_key: str | None = None) -> pd.Dat
     """
     url = CENSUS_ACS_BASE.format(year=year)
     params = {"get": f"NAME,{CENSUS_HOUSING_VARS}", "for": "county:*"}
-    # Supplying the key is optional for light use, so add it only when given.
+    # Fall back to the environment so the key never has to be committed.
+    api_key = api_key or os.environ.get("CENSUS_API_KEY")
     if api_key:
         params["key"] = api_key
     resp = requests.get(url, params=params, headers=REQUEST_HEADERS, timeout=60)
     resp.raise_for_status()
+    # Without a key the API redirects to an HTML "Missing Key" page instead of
+    # returning an error status.
+    if "missing_key" in resp.url or "json" not in resp.headers.get("content-type", ""):
+        raise RuntimeError(
+            "Census API did not return data (it now requires a free API key). "
+            "Get one at https://api.census.gov/data/key_signup.html and set the "
+            "CENSUS_API_KEY environment variable."
+        )
     # The API returns one header row followed by one row per county.
     data = resp.json()
     df = pd.DataFrame(data[1:], columns=data[0])
